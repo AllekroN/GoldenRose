@@ -33,7 +33,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <script>
-        // Конфигурация Firebase (ЗАМЕНИТЕ ЭТИ ДАННЫЕ!)
+        // Конфигурация Firebase (ЗАМЕНИТЕ НА СВОИ ДАННЫЕ!)
         const firebaseConfig = {
   apiKey: "AIzaSyCYLz0HIs9P4xp9ILpErRmKmWr5Ljss31U",
   authDomain: "goldenroseweb.firebaseapp.com",
@@ -44,7 +44,6 @@
   appId: "1:355125234409:web:5f08a1431d9525838d7e78",
   measurementId: "G-K9YD88LCNJ"
 };
-        
         // Инициализация Firebase
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
@@ -86,7 +85,7 @@
                 iconAnchor: [20, 40]
             });
 
-            const marker = L.marker([data.x, data.y], {
+            const marker = L.marker([data.lat, data.lng], {
                 draggable: true,
                 icon: kingIcon
             }).bindPopup(`
@@ -101,8 +100,8 @@
                 console.log("Новая позиция:", newPos);
                 
                 database.ref(`markers/${id}`).update({
-                    x: newPos.x,
-                    y: newPos.y
+                    lat: newPos.lat,
+                    lng: newPos.lng
                 })
                 .then(() => console.log("Позиция сохранена"))
                 .catch(error => console.error("Ошибка сохранения позиции:", error));
@@ -127,12 +126,13 @@
 
         // Создание нового маркера
         map.on('click', (e) => {
-            console.log("Создание маркера в:", e.latlng);
+            const {lat, lng} = e.latlng;
+            console.log("Создание маркера в:", lat, lng);
             
             const newMarkerRef = database.ref('markers').push();
             newMarkerRef.set({
-                x: e.latlng.x,
-                y: e.latlng.y,
+                lat: lat,
+                lng: lng,
                 title: 'Новый персонаж',
                 content: 'Описание...'
             })
