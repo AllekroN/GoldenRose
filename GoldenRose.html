@@ -1,33 +1,33 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Бальный зал "Золотая Роза"</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <title>Золотая Роза</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        #map {
-            height: 100vh;
-            width: 100vw;
-            background: #f0f0f0;
-        }
-        .hidden-data { color: red; }
-        .admin-panel {
+        #map { height: 100vh; width: 100vw; }
+        .login-panel {
             position: fixed;
-            top: 10px;
-            right: 10px;
+            top: 20px;
+            left: 20px;
             z-index: 1000;
-            background: white;
-            padding: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            background: rgba(255,255,255,0.9);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
         }
-        .marker-form input { margin: 5px; }
+        .gm-only { display: none; }
     </style>
 </head>
 <body>
-    <div class="admin-panel" id="adminPanel" style="display: none;">
-        <h3>Админ-панель</h3>
-        <button onclick="showImportDialog()">Импорт из CSV</button>
-        <input type="file" id="csvFile" accept=".csv" hidden>
+    <div class="login-panel" id="loginPanel">
+        <h3>Вход в систему</h3>
+        <div id="gmLogin">
+            <input type="email" id="gmEmail" placeholder="Логин ГМ">
+            <input type="password" id="gmPassword" placeholder="Пароль ГМ">
+            <button onclick="loginAsGM()">Войти как ГМ</button>
+        </div>
+        <button onclick="loginAsPlayer()">Играть как гость</button>
     </div>
     <div id="map"></div>
 
@@ -37,168 +37,145 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 
     <script>
-        // Конфигурация Firebase
-        const firebaseConfig = { /* Ваши данные */ };
+        // Конфигурация Firebase (ЗАМЕНИТЕ НА СВОЮ!)
+        const firebaseConfig = {
+  apiKey: "AIzaSyCYLz0HIs9P4xp9ILpErRmKmWr5Ljss31U",
+  authDomain: "goldenroseweb.firebaseapp.com",
+  databaseURL: "https://goldenroseweb-default-rtdb.firebaseio.com",
+  projectId: "goldenroseweb",
+  storageBucket: "goldenroseweb.firebasestorage.app",
+  messagingSenderId: "355125234409",
+  appId: "1:355125234409:web:5f08a1431d9525838d7e78",
+  measurementId: "G-K9YD88LCNJ"
+};
+        
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
         const auth = firebase.auth();
 
-        // Система прав доступа
-        let isAdmin = false;
-        let currentUserId = null;
+        // Настройки карты
+        let map;
+        let isGM = false;
+        const GM_CREDENTIALS = {
+            email: "gmDoV@goldenroseweb.firebaseapp.com",
+            password: "02072023Kira"
+        };
 
-        // Аутентификация
-        auth.signInAnonymously().then(cred => {
-            currentUserId = cred.user.uid;
-            checkAdminRights();
-        });
+        // Система аутентификации
+        async function loginAsGM() {
+            try {
+                await auth.signInWithEmailAndPassword(
+                    document.getElementById('gmEmail').value,
+                    document.getElementById('gmPassword').value
+                );
+                initGMFeatures();
+            } catch (error) {
+                alert("Ошибка входа: " + error.message);
+            }
+        }
 
-        async function checkAdminRights() {
-            const token = await auth.currentUser.getIdTokenResult();
-            isAdmin = token.claims.admin || false;
-            document.getElementById('adminPanel').style.display = isAdmin ? 'block' : 'none';
+        async function loginAsPlayer() {
+            await auth.signInAnonymously();
+            initPlayerFeatures();
+        }
+
+        function initGMFeatures() {
+            isGM = true;
+            document.getElementById('loginPanel').style.display = 'none';
+            initMap();
+            database.ref('npcs').on('value', handleNPCs);
+            document.querySelectorAll('.gm-only').forEach(el => el.style.display = 'block');
+        }
+
+        function initPlayerFeatures() {
+            isGM = false;
+            document.getElementById('loginPanel').style.display = 'none';
+            initMap();
+            database.ref('markers/' + auth.currentUser.uid).on('value', handleMarkers);
         }
 
         // Инициализация карты
-        const map = L.map('map', {
-            crs: L.CRS.Simple,
-            minZoom: -2,
-            maxZoom: 5,
-            maxBoundsViscosity: 1.0
-        }).fitBounds([[0,0], [5000,5000]]);
+        function initMap() {
+            map = L.map('map', {
+                crs: L.CRS.Simple,
+                minZoom: -2,
+                maxZoom: 5
+            });
 
-        L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', [[0,0], [5000,5000]], {
-            className: 'responsive-image'
-        }).addTo(map);
+            L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', [[0,0], [5000,5000]]).addTo(map);
+            map.fitBounds([[0,0], [5000,5000]]);
 
-        // Загрузка данных NPC (пример из CSV)
-        async function loadNPCDataFromCSV(file) {
-            const text = await file.text();
-            const rows = text.split('\n').slice(1);
+            if(isGM) {
+                map.on('click', createNPC);
+            } else {
+                map.on('click', createPlayerMarker);
+            }
+        }
+
+        // Работа с маркерами
+        function createNPC(e) {
+            const npcData = {
+                name: "Новый NPC",
+                type: "Человек",
+                x: e.latlng.x,
+                y: e.latlng.y,
+                stats: {
+                    health: 100,
+                    armor: 50
+                }
+            };
             
-            rows.forEach(row => {
-                const [name, type, health, armor] = row.split(';');
-                database.ref('npcs').push({
-                    name: name?.trim() || '???',
-                    type: type?.trim() || '???',
-                    health: health?.trim() || '???',
-                    armor: armor?.trim() || '???'
+            database.ref('npcs').push(npcData);
+        }
+
+        function createPlayerMarker(e) {
+            const markersRef = database.ref('markers/' + auth.currentUser.uid);
+            markersRef.once('value').then(snapshot => {
+                if(snapshot.numChildren() >= 1) {
+                    alert("Вы можете создать только один маркер!");
+                    return;
+                }
+                
+                markersRef.push({
+                    x: e.latlng.x,
+                    y: e.latlng.y,
+                    name: "Моя метка"
                 });
             });
         }
 
-        // Система маркеров
-        const userMarkers = {};
-
-        function createMarker(data, id, isUserMarker = false) {
-            const icon = L.icon({
-                iconUrl: data.icon || 'default.png',
-                iconSize: [40, 40],
-                iconAnchor: [20, 40]
-            });
-
-            const marker = L.marker([data.x, data.y], {
-                draggable: isUserMarker,
-                icon: icon
-            }).bindPopup(createPopupContent(data, id, isUserMarker));
-            
-            if(isUserMarker) {
-                marker.on('dragend', updateMarkerPosition);
-                userMarkers[id] = marker;
-            }
-            
-            return marker.addTo(map);
-        }
-
-        function createPopupContent(data, id, isUserMarker) {
-            let content = `
-                <h3 class="hidden-data">${data.name || '???'}</h3>
-                <p>Вид: <span class="hidden-data">${data.type || '???'}</span></p>
-                <p>Здоровье: <span class="hidden-data">${data.health || '???'}</span></p>
-                <p>Броня: <span class="hidden-data">${data.armor || '???'}</span></p>
-            `;
-
-            if(isAdmin) {
-                content += `<button onclick="editMarker('${id}')">Редактировать</button>`;
-            }
-
-            if(isUserMarker) {
-                content += `<button onclick="deleteMarker('${id}')">Удалить</button>`;
-            }
-
-            return content;
-        }
-
-        // Управление маркерами
-        function deleteMarker(id) {
-            database.ref(`markers/${id}`).remove();
-            map.removeLayer(userMarkers[id]);
-        }
-
-        function updateMarkerPosition(e) {
-            const markerId = Object.keys(userMarkers).find(key => userMarkers[key] === e.target);
-            database.ref(`markers/${markerId}`).update({
-                x: e.target.getLatLng().x,
-                y: e.target.getLatLug().y
+        // Обработчики данных
+        function handleNPCs(snapshot) {
+            snapshot.forEach(child => {
+                const data = child.val();
+                L.marker([data.x, data.y], {
+                    icon: L.icon({
+                        iconUrl: 'https://i.imgur.com/fOvASpi.jpeg',
+                        iconSize: [40,40]
+                    })
+                }).bindPopup(`
+                    <h3>${data.name}</h3>
+                    ${isGM ? `<p>Здоровье: ${data.stats.health}</p>` : ''}
+                `).addTo(map);
             });
         }
 
-        // Админ-функции
-        function showImportDialog() {
-            document.getElementById('csvFile').click();
-        }
-
-        document.getElementById('csvFile').addEventListener('change', e => {
-            loadNPCDataFromCSV(e.target.files[0]);
-        });
-
-        function editMarker(id) {
-            // Логика редактирования через модальное окно
-            const newData = prompt('Введите новые данные в формате JSON:');
-            try {
-                database.ref(`npcs/${id}`).update(JSON.parse(newData));
-            } catch(e) {
-                alert('Ошибка формата данных!');
-            }
-        }
-
-        // Инициализация данных
-        database.ref('markers').on('child_added', snapshot => {
-            const data = snapshot.val();
-            if(data.userId === currentUserId) {
-                createMarker(data, snapshot.key, true);
-            }
-        });
-
-        database.ref('npcs').on('child_added', snapshot => {
-            if(!document.querySelector(`[data-npc-id="${snapshot.key}"]`)) {
-                createMarker(snapshot.val(), snapshot.key);
-            }
-        });
-
-        // Создание маркера пользователем
-        map.on('click', async e => {
-            if(Object.keys(userMarkers).length >= 1 && !isAdmin) {
-                alert('Вы можете создать только один маркер!');
-                return;
-            }
-
-            const newMarkerRef = database.ref('markers').push();
-            await newMarkerRef.set({
-                x: e.latlng.x,
-                y: e.latlng.y,
-                userId: currentUserId,
-                name: 'Новый персонаж',
-                type: '???',
-                health: '???',
-                armor: '???'
+        function handleMarkers(snapshot) {
+            snapshot.forEach(child => {
+                const data = child.val();
+                const marker = L.marker([data.x, data.y]).addTo(map);
+                marker.on('dragend', e => {
+                    database.ref(`markers/${auth.currentUser.uid}/${child.key}`).update({
+                        x: e.target.getLatLng().x,
+                        y: e.target.getLatLng().y
+                    });
+                });
             });
-        });
+        }
 
-        // Адаптивный дизайн
-        window.addEventListener('resize', () => {
-            map.invalidateSize();
-            L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', [[0,0], [5000,5000]]).addTo(map);
+        // Инициализация
+        auth.onAuthStateChanged(user => {
+            if(user && user.isAnonymous) initPlayerFeatures();
         });
     </script>
 </body>
