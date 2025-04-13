@@ -5,139 +5,200 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        #map { 
-            height: 1500px; 
-            width: 100%; 
+        #map {
+            height: 100vh;
+            width: 100vw;
             background: #f0f0f0;
         }
-        .editable {
-            border: 1px dashed #ccc;
-            padding: 5px;
-            margin: 5px 0;
+        .hidden-data { color: red; }
+        .admin-panel {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
         }
-        button {
-            margin-top: 10px;
-            padding: 5px 15px;
-            cursor: pointer;
-        }
+        .marker-form input { margin: 5px; }
     </style>
 </head>
 <body>
+    <div class="admin-panel" id="adminPanel" style="display: none;">
+        <h3>Админ-панель</h3>
+        <button onclick="showImportDialog()">Импорт из CSV</button>
+        <input type="file" id="csvFile" accept=".csv" hidden>
+    </div>
     <div id="map"></div>
 
-    <!-- Firebase 8.x -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-    
-    <!-- Leaflet -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 
     <script>
-        // Конфигурация Firebase (ЗАМЕНИТЕ НА СВОИ ДАННЫЕ!)
-        const firebaseConfig = {
-  apiKey: "AIzaSyCYLz0HIs9P4xp9ILpErRmKmWr5Ljss31U",
-  authDomain: "goldenroseweb.firebaseapp.com",
-  databaseURL: "https://goldenroseweb-default-rtdb.firebaseio.com",
-  projectId: "goldenroseweb",
-  storageBucket: "goldenroseweb.firebasestorage.app",
-  messagingSenderId: "355125234409",
-  appId: "1:355125234409:web:5f08a1431d9525838d7e78",
-  measurementId: "G-K9YD88LCNJ"
-};
-        // Инициализация Firebase
+        // Конфигурация Firebase
+        const firebaseConfig = { /* Ваши данные */ };
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
+        const auth = firebase.auth();
+
+        // Система прав доступа
+        let isAdmin = false;
+        let currentUserId = null;
+
+        // Аутентификация
+        auth.signInAnonymously().then(cred => {
+            currentUserId = cred.user.uid;
+            checkAdminRights();
+        });
+
+        async function checkAdminRights() {
+            const token = await auth.currentUser.getIdTokenResult();
+            isAdmin = token.claims.admin || false;
+            document.getElementById('adminPanel').style.display = isAdmin ? 'block' : 'none';
+        }
 
         // Инициализация карты
-        const imageBounds = [[0, 0], [5000, 5000]];
         const map = L.map('map', {
             crs: L.CRS.Simple,
             minZoom: -2,
             maxZoom: 5,
-            inertia: false
-        });
+            maxBoundsViscosity: 1.0
+        }).fitBounds([[0,0], [5000,5000]]);
 
-        // Фоновое изображение
-        L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', imageBounds).addTo(map);
-        map.fitBounds(imageBounds);
+        L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', [[0,0], [5000,5000]], {
+            className: 'responsive-image'
+        }).addTo(map);
 
-        // Загрузка маркеров
-        database.ref('markers').on('value', (snapshot) => {
-            console.log("Данные получены:", snapshot.val());
+        // Загрузка данных NPC (пример из CSV)
+        async function loadNPCDataFromCSV(file) {
+            const text = await file.text();
+            const rows = text.split('\n').slice(1);
             
-            map.eachLayer(layer => {
-                if (layer instanceof L.Marker) layer.remove();
-            });
-
-            const markersData = snapshot.val();
-            if (markersData) {
-                Object.keys(markersData).forEach(key => {
-                    createMarker(markersData[key], key);
+            rows.forEach(row => {
+                const [name, type, health, armor] = row.split(';');
+                database.ref('npcs').push({
+                    name: name?.trim() || '???',
+                    type: type?.trim() || '???',
+                    health: health?.trim() || '???',
+                    armor: armor?.trim() || '???'
                 });
-            }
-        });
+            });
+        }
 
-        // Создание маркера
-        function createMarker(data, id) {
-            const kingIcon = L.icon({
-                iconUrl: 'https://i.imgur.com/fOvASpi.jpeg',
+        // Система маркеров
+        const userMarkers = {};
+
+        function createMarker(data, id, isUserMarker = false) {
+            const icon = L.icon({
+                iconUrl: data.icon || 'default.png',
                 iconSize: [40, 40],
                 iconAnchor: [20, 40]
             });
 
-            const marker = L.marker([data.lat, data.lng], {
-                draggable: true,
-                icon: kingIcon
-            }).bindPopup(`
-                <h3 contenteditable="true" class="editable">${data.title || 'Новый персонаж'}</h3>
-                <div contenteditable="true" class="editable">${data.content || 'Описание...'}</div>
-                <button onclick="saveChanges('${id}')">Сохранить</button>
-            `).addTo(map);
+            const marker = L.marker([data.x, data.y], {
+                draggable: isUserMarker,
+                icon: icon
+            }).bindPopup(createPopupContent(data, id, isUserMarker));
+            
+            if(isUserMarker) {
+                marker.on('dragend', updateMarkerPosition);
+                userMarkers[id] = marker;
+            }
+            
+            return marker.addTo(map);
+        }
 
-            // Обработка перемещения
-            marker.on('dragend', (e) => {
-                const newPos = e.target.getLatLng();
-                console.log("Новая позиция:", newPos);
-                
-                database.ref(`markers/${id}`).update({
-                    lat: newPos.lat,
-                    lng: newPos.lng
-                })
-                .then(() => console.log("Позиция сохранена"))
-                .catch(error => console.error("Ошибка сохранения позиции:", error));
+        function createPopupContent(data, id, isUserMarker) {
+            let content = `
+                <h3 class="hidden-data">${data.name || '???'}</h3>
+                <p>Вид: <span class="hidden-data">${data.type || '???'}</span></p>
+                <p>Здоровье: <span class="hidden-data">${data.health || '???'}</span></p>
+                <p>Броня: <span class="hidden-data">${data.armor || '???'}</span></p>
+            `;
+
+            if(isAdmin) {
+                content += `<button onclick="editMarker('${id}')">Редактировать</button>`;
+            }
+
+            if(isUserMarker) {
+                content += `<button onclick="deleteMarker('${id}')">Удалить</button>`;
+            }
+
+            return content;
+        }
+
+        // Управление маркерами
+        function deleteMarker(id) {
+            database.ref(`markers/${id}`).remove();
+            map.removeLayer(userMarkers[id]);
+        }
+
+        function updateMarkerPosition(e) {
+            const markerId = Object.keys(userMarkers).find(key => userMarkers[key] === e.target);
+            database.ref(`markers/${markerId}`).update({
+                x: e.target.getLatLng().x,
+                y: e.target.getLatLug().y
             });
         }
 
-        // Сохранение текста
-        window.saveChanges = function(id) {
-            const popupContent = document.querySelector('.leaflet-popup-content');
-            const title = popupContent.querySelector('h3').innerText;
-            const content = popupContent.querySelector('div').innerText;
-            
-            console.log("Сохранение текста:", {id, title, content});
-            
-            database.ref(`markers/${id}`).update({ 
-                title: title,
-                content: content 
-            })
-            .then(() => console.log("Текст успешно сохранен"))
-            .catch(error => console.error("Ошибка сохранения текста:", error));
-        };
+        // Админ-функции
+        function showImportDialog() {
+            document.getElementById('csvFile').click();
+        }
 
-        // Создание нового маркера
-        map.on('click', (e) => {
-            const {lat, lng} = e.latlng;
-            console.log("Создание маркера в:", lat, lng);
-            
+        document.getElementById('csvFile').addEventListener('change', e => {
+            loadNPCDataFromCSV(e.target.files[0]);
+        });
+
+        function editMarker(id) {
+            // Логика редактирования через модальное окно
+            const newData = prompt('Введите новые данные в формате JSON:');
+            try {
+                database.ref(`npcs/${id}`).update(JSON.parse(newData));
+            } catch(e) {
+                alert('Ошибка формата данных!');
+            }
+        }
+
+        // Инициализация данных
+        database.ref('markers').on('child_added', snapshot => {
+            const data = snapshot.val();
+            if(data.userId === currentUserId) {
+                createMarker(data, snapshot.key, true);
+            }
+        });
+
+        database.ref('npcs').on('child_added', snapshot => {
+            if(!document.querySelector(`[data-npc-id="${snapshot.key}"]`)) {
+                createMarker(snapshot.val(), snapshot.key);
+            }
+        });
+
+        // Создание маркера пользователем
+        map.on('click', async e => {
+            if(Object.keys(userMarkers).length >= 1 && !isAdmin) {
+                alert('Вы можете создать только один маркер!');
+                return;
+            }
+
             const newMarkerRef = database.ref('markers').push();
-            newMarkerRef.set({
-                lat: lat,
-                lng: lng,
-                title: 'Новый персонаж',
-                content: 'Описание...'
-            })
-            .then(() => console.log("Маркер создан"))
-            .catch(error => console.error("Ошибка создания маркера:", error));
+            await newMarkerRef.set({
+                x: e.latlng.x,
+                y: e.latlng.y,
+                userId: currentUserId,
+                name: 'Новый персонаж',
+                type: '???',
+                health: '???',
+                armor: '???'
+            });
+        });
+
+        // Адаптивный дизайн
+        window.addEventListener('resize', () => {
+            map.invalidateSize();
+            L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', [[0,0], [5000,5000]]).addTo(map);
         });
     </script>
 </body>
