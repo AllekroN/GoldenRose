@@ -15,12 +15,17 @@
             padding: 5px;
             margin: 5px 0;
         }
+        button {
+            margin-top: 10px;
+            padding: 5px 15px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
 
-    <!-- Подключение Firebase 8.x -->
+    <!-- Firebase 8.x -->
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     
@@ -28,17 +33,15 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <script>
-        // Конфигурация Firebase (ЗАМЕНИТЕ НА СВОЮ!)
-       const firebaseConfig = {
-  apiKey: "AIzaSyCYLz0HIs9P4xp9ILpErRmKmWr5Ljss31U",
-  authDomain: "goldenroseweb.firebaseapp.com",
-  databaseURL: "https://goldenroseweb-default-rtdb.firebaseio.com",
-  projectId: "goldenroseweb",
-  storageBucket: "goldenroseweb.firebasestorage.app",
-  messagingSenderId: "355125234409",
-  appId: "1:355125234409:web:5f08a1431d9525838d7e78",
-  measurementId: "G-K9YD88LCNJ"
-};
+        // Конфигурация Firebase (ЗАМЕНИТЕ ЭТИ ДАННЫЕ!)
+        const firebaseConfig = {
+            apiKey: "AIzaSyBx...",
+            authDomain: "ваш-проект.firebaseapp.com",
+            databaseURL: "https://ваш-проект.firebaseio.com",
+            projectId: "ваш-проект",
+            storageBucket: "ваш-проект.appspot.com",
+            messagingSenderId: "123456789"
+        };
         
         // Инициализация Firebase
         firebase.initializeApp(firebaseConfig);
@@ -49,23 +52,23 @@
         const map = L.map('map', {
             crs: L.CRS.Simple,
             minZoom: -2,
-            maxZoom: 5
+            maxZoom: 5,
+            inertia: false
         });
 
-        // Загрузка фонового изображения (проверьте ссылку!)
+        // Фоновое изображение
         L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', imageBounds).addTo(map);
         map.fitBounds(imageBounds);
 
-        // Загрузка маркеров из Firebase
+        // Загрузка маркеров
         database.ref('markers').on('value', (snapshot) => {
-            const markersData = snapshot.val();
+            console.log("Данные получены:", snapshot.val());
             
-            // Очистка старых маркеров
             map.eachLayer(layer => {
                 if (layer instanceof L.Marker) layer.remove();
             });
 
-            // Создание новых маркеров
+            const markersData = snapshot.val();
             if (markersData) {
                 Object.keys(markersData).forEach(key => {
                     createMarker(markersData[key], key);
@@ -73,7 +76,7 @@
             }
         });
 
-        // Функция создания маркера
+        // Создание маркера
         function createMarker(data, id) {
             const kingIcon = L.icon({
                 iconUrl: 'https://i.imgur.com/fOvASpi.jpeg',
@@ -90,37 +93,49 @@
                 <button onclick="saveChanges('${id}')">Сохранить</button>
             `).addTo(map);
 
-            // Обновление позиции при перемещении
+            // Обработка перемещения
             marker.on('dragend', (e) => {
                 const newPos = e.target.getLatLng();
+                console.log("Новая позиция:", newPos);
+                
                 database.ref(`markers/${id}`).update({
                     x: newPos.x,
                     y: newPos.y
-                });
+                })
+                .then(() => console.log("Позиция сохранена"))
+                .catch(error => console.error("Ошибка сохранения позиции:", error));
             });
         }
 
-        // Сохранение изменений текста
+        // Сохранение текста
         window.saveChanges = function(id) {
             const popupContent = document.querySelector('.leaflet-popup-content');
             const title = popupContent.querySelector('h3').innerText;
             const content = popupContent.querySelector('div').innerText;
             
+            console.log("Сохранение текста:", {id, title, content});
+            
             database.ref(`markers/${id}`).update({ 
                 title: title,
                 content: content 
-            });
+            })
+            .then(() => console.log("Текст успешно сохранен"))
+            .catch(error => console.error("Ошибка сохранения текста:", error));
         };
 
-        // Добавление нового маркера по клику
+        // Создание нового маркера
         map.on('click', (e) => {
+            console.log("Создание маркера в:", e.latlng);
+            
             const newMarkerRef = database.ref('markers').push();
             newMarkerRef.set({
                 x: e.latlng.x,
                 y: e.latlng.y,
                 title: 'Новый персонаж',
                 content: 'Описание...'
-            });
+            })
+            .then(() => console.log("Маркер создан"))
+            .catch(error => console.error("Ошибка создания маркера:", error));
         });
     </script>
 </body>
