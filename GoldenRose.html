@@ -17,15 +17,18 @@
             box-shadow: 0 0 10px rgba(0,0,0,0.2);
         }
         .gm-only { display: none; }
+        #gmLogin { display: none; } /* Скрываем поля по умолчанию */
+        .visible { display: block !important; }
     </style>
 </head>
 <body>
     <div class="login-panel" id="loginPanel">
         <h3>Вход в систему</h3>
+        <button onclick="showGMLogin()">Войти как ГМ</button>
         <div id="gmLogin">
             <input type="email" id="gmEmail" placeholder="Логин ГМ">
             <input type="password" id="gmPassword" placeholder="Пароль ГМ">
-            <button onclick="loginAsGM()">Войти как ГМ</button>
+            <button onclick="loginAsGM()">Подтвердить</button>
         </div>
         <button onclick="loginAsPlayer()">Играть как гость</button>
     </div>
@@ -37,29 +40,30 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 
     <script>
-        // Конфигурация Firebase (ЗАМЕНИТЕ НА СВОЮ!)
         const firebaseConfig = {
-  apiKey: "AIzaSyCYLz0HIs9P4xp9ILpErRmKmWr5Ljss31U",
-  authDomain: "goldenroseweb.firebaseapp.com",
-  databaseURL: "https://goldenroseweb-default-rtdb.firebaseio.com",
-  projectId: "goldenroseweb",
-  storageBucket: "goldenroseweb.firebasestorage.app",
-  messagingSenderId: "355125234409",
-  appId: "1:355125234409:web:5f08a1431d9525838d7e78",
-  measurementId: "G-K9YD88LCNJ"
-};
-        
+            apiKey: "AIzaSyCYLz0HIs9P4xp9ILpErRmKmWr5Ljss31U",
+            authDomain: "goldenroseweb.firebaseapp.com",
+            databaseURL: "https://goldenroseweb-default-rtdb.firebaseio.com",
+            projectId: "goldenroseweb",
+            storageBucket: "goldenroseweb.firebasestorage.app",
+            messagingSenderId: "355125234409",
+            appId: "1:355125234409:web:5f08a1431d9525838d7e78",
+            measurementId: "G-K9YD88LCNJ"
+        };
+
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
         const auth = firebase.auth();
 
-        // Настройки карты
+        // Глобальные переменные
         let map;
         let isGM = false;
-        const GM_CREDENTIALS = {
-            email: "gmDoV@goldenroseweb.firebaseapp.com",
-            password: "02072023Kira"
-        };
+        let markersLayer = L.layerGroup();
+
+        // Показать форму для ГМ
+        function showGMLogin() {
+            document.getElementById('gmLogin').classList.add('visible');
+        }
 
         // Система аутентификации
         async function loginAsGM() {
@@ -79,29 +83,21 @@
             initPlayerFeatures();
         }
 
-        function initGMFeatures() {
-            isGM = true;
-            document.getElementById('loginPanel').style.display = 'none';
-            initMap();
-            database.ref('npcs').on('value', handleNPCs);
-            document.querySelectorAll('.gm-only').forEach(el => el.style.display = 'block');
-        }
-
-        function initPlayerFeatures() {
-            isGM = false;
-            document.getElementById('loginPanel').style.display = 'none';
-            initMap();
-            database.ref('markers/' + auth.currentUser.uid).on('value', handleMarkers);
-        }
-
         // Инициализация карты
         function initMap() {
+            if (map) {
+                map.off();
+                map.remove();
+                markersLayer.clearLayers();
+            }
+
             map = L.map('map', {
                 crs: L.CRS.Simple,
                 minZoom: -2,
                 maxZoom: 5
             });
 
+            markersLayer.addTo(map);
             L.imageOverlay('https://i.imgur.com/OagxjJL.jpeg', [[0,0], [5000,5000]]).addTo(map);
             map.fitBounds([[0,0], [5000,5000]]);
 
@@ -112,20 +108,32 @@
             }
         }
 
-        // Работа с маркерами
+        // Функции для ГМ
+        function initGMFeatures() {
+            isGM = true;
+            document.getElementById('loginPanel').style.display = 'none';
+            initMap();
+            database.ref('npcs').on('value', handleNPCs);
+            document.querySelectorAll('.gm-only').forEach(el => el.style.display = 'block');
+        }
+
         function createNPC(e) {
             const npcData = {
                 name: "Новый NPC",
                 type: "Человек",
-                x: e.latlng.x,
-                y: e.latlng.y,
-                stats: {
-                    health: 100,
-                    armor: 50
-                }
+                x: e.latlng.lng,  // Правильные координаты для CRS.Simple
+                y: e.latlng.lat,
+                stats: { health: 100, armor: 50 }
             };
-            
             database.ref('npcs').push(npcData);
+        }
+
+        // Функции для игрока
+        function initPlayerFeatures() {
+            isGM = false;
+            document.getElementById('loginPanel').style.display = 'none';
+            initMap();
+            database.ref('markers/' + auth.currentUser.uid).on('value', handleMarkers);
         }
 
         function createPlayerMarker(e) {
@@ -137,8 +145,8 @@
                 }
                 
                 markersRef.push({
-                    x: e.latlng.x,
-                    y: e.latlng.y,
+                    x: e.latlng.lng,
+                    y: e.latlng.lat,
                     name: "Моя метка"
                 });
             });
@@ -146,9 +154,10 @@
 
         // Обработчики данных
         function handleNPCs(snapshot) {
+            markersLayer.clearLayers();
             snapshot.forEach(child => {
                 const data = child.val();
-                L.marker([data.x, data.y], {
+                L.marker([data.y, data.x], {
                     icon: L.icon({
                         iconUrl: 'https://i.imgur.com/fOvASpi.jpeg',
                         iconSize: [40,40]
@@ -156,24 +165,26 @@
                 }).bindPopup(`
                     <h3>${data.name}</h3>
                     ${isGM ? `<p>Здоровье: ${data.stats.health}</p>` : ''}
-                `).addTo(map);
+                `).addTo(markersLayer);
             });
         }
 
         function handleMarkers(snapshot) {
+            markersLayer.clearLayers();
             snapshot.forEach(child => {
                 const data = child.val();
-                const marker = L.marker([data.x, data.y]).addTo(map);
+                const marker = L.marker([data.y, data.x], { draggable: true }).addTo(markersLayer);
                 marker.on('dragend', e => {
+                    const newPos = e.target.getLatLng();
                     database.ref(`markers/${auth.currentUser.uid}/${child.key}`).update({
-                        x: e.target.getLatLng().x,
-                        y: e.target.getLatLng().y
+                        x: newPos.lng,
+                        y: newPos.lat
                     });
                 });
             });
         }
 
-        // Инициализация
+        // Инициализация при загрузке
         auth.onAuthStateChanged(user => {
             if(user && user.isAnonymous) initPlayerFeatures();
         });
