@@ -17,8 +17,22 @@
             box-shadow: 0 0 10px rgba(0,0,0,0.2);
         }
         .gm-only { display: none; }
-        #gmLogin { display: none; } /* Скрываем поля по умолчанию */
+        #gmLogin { display: none; }
         .visible { display: block !important; }
+        .logout-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            padding: 10px 20px;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .hidden-info { display: none; }
+        .show-more-btn { margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -32,6 +46,7 @@
         </div>
         <button onclick="loginAsPlayer()">Играть как гость</button>
     </div>
+    <button class="logout-btn" id="logoutBtn" style="display: none;">Выйти</button>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -55,7 +70,6 @@
         const database = firebase.database();
         const auth = firebase.auth();
 
-        // Глобальные переменные
         let map;
         let isGM = false;
         let markersLayer = L.layerGroup();
@@ -112,6 +126,7 @@
         function initGMFeatures() {
             isGM = true;
             document.getElementById('loginPanel').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'block';
             initMap();
             database.ref('npcs').on('value', handleNPCs);
             document.querySelectorAll('.gm-only').forEach(el => el.style.display = 'block');
@@ -120,10 +135,15 @@
         function createNPC(e) {
             const npcData = {
                 name: "Новый NPC",
-                type: "Человек",
-                x: e.latlng.lng,  // Правильные координаты для CRS.Simple
+                race: "Человек",
+                x: e.latlng.lng,
                 y: e.latlng.lat,
-                stats: { health: 100, armor: 50 }
+                stats: { 
+                    health: 100,
+                    armor: 50,
+                    level: 1,
+                    abilities: "Сила, Ловкость"
+                }
             };
             database.ref('npcs').push(npcData);
         }
@@ -132,6 +152,7 @@
         function initPlayerFeatures() {
             isGM = false;
             document.getElementById('loginPanel').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'block';
             initMap();
             database.ref('markers/' + auth.currentUser.uid).on('value', handleMarkers);
         }
@@ -147,7 +168,13 @@
                 markersRef.push({
                     x: e.latlng.lng,
                     y: e.latlng.lat,
-                    name: "Моя метка"
+                    name: "Моя метка",
+                    race: "Человек",
+                    stats: {
+                        health: 100,
+                        armor: 50,
+                        level: 1
+                    }
                 });
             });
         }
@@ -157,15 +184,8 @@
             markersLayer.clearLayers();
             snapshot.forEach(child => {
                 const data = child.val();
-                L.marker([data.y, data.x], {
-                    icon: L.icon({
-                        iconUrl: 'https://i.imgur.com/fOvASpi.jpeg',
-                        iconSize: [40,40]
-                    })
-                }).bindPopup(`
-                    <h3>${data.name}</h3>
-                    ${isGM ? `<p>Здоровье: ${data.stats.health}</p>` : ''}
-                `).addTo(markersLayer);
+                const marker = createMarker(child, data, true);
+                setupGMControls(marker, child);
             });
         }
 
@@ -173,15 +193,102 @@
             markersLayer.clearLayers();
             snapshot.forEach(child => {
                 const data = child.val();
-                const marker = L.marker([data.y, data.x], { draggable: true }).addTo(markersLayer);
+                const marker = createMarker(child, data, false);
+                setupPlayerControls(marker, child);
+            });
+        }
+
+        function createMarker(child, data, isNPC) {
+            const marker = L.marker([data.y, data.x], {
+                icon: isNPC ? L.icon({
+                    iconUrl: 'https://i.imgur.com/fOvASpi.jpeg',
+                    iconSize: [40,40]
+                }) : null,
+                draggable: isGM || auth.currentUser.uid === child.ref.parent.key
+            }).addTo(markersLayer);
+
+            const popupContent = isGM ? 
+                createGMPopup(data, isNPC) : 
+                createPlayerPopup(data, isNPC);
+
+            marker.bindPopup(popupContent);
+            return marker;
+        }
+
+        function createGMPopup(data, isNPC) {
+            let content = `<h3>${data.name}</h3>`;
+            if(isNPC) {
+                content += `
+                    <p>Раса: ${data.race}</p>
+                    <p>Здоровье: ${data.stats.health}</p>
+                    <p>Броня: ${data.stats.armor}</p>
+                    <p>Уровень: ${data.stats.level}</p>
+                    ${data.stats.abilities ? `<p>Способности: ${data.stats.abilities}</p>` : ''}
+                `;
+            } else {
+                content += `
+                    <p>Владелец: ${data.owner || 'Неизвестно'}</p>
+                    <p>Раса: ${data.race}</p>
+                    <p>Координаты: X=${data.x.toFixed(2)}, Y=${data.y.toFixed(2)}</p>
+                    <p>Здоровье: ${data.stats.health}</p>
+                    <p>Броня: ${data.stats.armor}</p>
+                `;
+            }
+            return content;
+        }
+
+        function createPlayerPopup(data, isNPC) {
+            let content = `<div class="popup-content">
+                <h4>Силуэт</h4>
+                <p>@${data.race}</p>
+                <div class="hidden-info" id="hidden-${Date.now()}">
+                    ${isNPC ? `
+                        <p>Уровень: ${data.stats.level}</p>
+                        <p>Способности: ${data.stats.abilities || 'Нет'}</p>
+                    ` : `
+                        <p>Здоровье: ${data.stats.health}</p>
+                        <p>Броня: ${data.stats.armor}</p>
+                    `}
+                </div>
+                <button class="show-more-btn" onclick="document.getElementById('hidden-${Date.now()}').style.display='block'; this.style.display='none'">
+                    Отобразить
+                </button>
+            </div>`;
+            return content;
+        }
+
+        function setupGMControls(marker, child) {
+            marker.on('dragend', e => {
+                const newPos = e.target.getLatLng();
+                database.ref(`npcs/${child.key}`).update({
+                    x: newPos.lng,
+                    y: newPos.lat
+                });
+            });
+        }
+
+        function setupPlayerControls(marker, child) {
+            if (marker.dragging && (isGM || auth.currentUser.uid === child.ref.parent.key)) {
                 marker.on('dragend', e => {
                     const newPos = e.target.getLatLng();
-                    database.ref(`markers/${auth.currentUser.uid}/${child.key}`).update({
+                    database.ref(`markers/${child.ref.parent.key}/${child.key}`).update({
                         x: newPos.lng,
                         y: newPos.lat
                     });
                 });
-            });
+            }
+        }
+
+        // Выход из системы
+        document.getElementById('logoutBtn').addEventListener('click', logout);
+
+        async function logout() {
+            try {
+                await auth.signOut();
+                location.reload();
+            } catch (error) {
+                alert("Ошибка выхода: " + error.message);
+            }
         }
 
         // Инициализация при загрузке
